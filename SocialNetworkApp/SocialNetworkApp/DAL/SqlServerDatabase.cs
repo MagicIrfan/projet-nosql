@@ -21,23 +21,19 @@ public class SqlServerDatabase(string connectionString) : IDisposable
 
         try
         {
-            // Exécution des commandes DELETE
             command.CommandText = "DELETE FROM Purchases; DELETE FROM Followers; DELETE FROM Users;";
             command.ExecuteNonQuery();
 
-            // Commit des modifications si tout se passe bien
             transaction.Commit();
-            Console.WriteLine("✅ Données existantes supprimées.");
+            Console.WriteLine("Données existantes supprimées.");
         }
         catch (Exception ex)
         {
-            // Si une erreur survient, on effectue un rollback
             transaction.Rollback();
-            Console.WriteLine($"❌ Erreur lors de la suppression des données : {ex.Message}");
+            Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
         }
     }
-
-    public void AddUsers(int userCount, int batchSize = 100)
+    public void AddUsers(int userCount)
     {
         using var connection = GetConnection();
         connection.Open();
@@ -48,24 +44,24 @@ public class SqlServerDatabase(string connectionString) : IDisposable
 
         try
         {
-            command.CommandText = "SELECT ProductId FROM Products;";
-            using var productReader = command.ExecuteReader();
-            var productIds = new List<int>();
+            int batchSize = 1000;
 
-            while (productReader.Read())
+            command.CommandText = "SELECT ProductId FROM Products;";
+            var productIds = new List<int>();
+            using (var productReader = command.ExecuteReader())
             {
-                productIds.Add(productReader.GetInt32(0));
+                while (productReader.Read())
+                {
+                    productIds.Add(productReader.GetInt32(0));
+                }
             }
-            productReader.Close();
 
             if (productIds.Count == 0)
             {
-                throw new Exception("❌ Aucun produit disponible dans la table Products !");
+                throw new Exception("Aucun produit disponible dans la table Products !");
             }
 
-            // 📌 Création des utilisateurs en lots
             var userInsertValues = new List<string>();
-
             for (var i = 0; i < userCount; i++)
             {
                 var userName = $"User{i + 1}";
@@ -79,76 +75,71 @@ public class SqlServerDatabase(string connectionString) : IDisposable
                 }
             }
 
-            // 🔍 Récupération des nouveaux utilisateurs
-            command.CommandText = "SELECT UserId FROM Users;";
-            using var reader = command.ExecuteReader();
             var insertedUserIds = new List<int>();
-
-            while (reader.Read())
+            command.CommandText = "SELECT TOP (@userCount) UserId FROM Users ORDER BY UserId DESC";
+            command.Parameters.AddWithValue("@userCount", userCount);
+            using (var reader = command.ExecuteReader())
             {
-                insertedUserIds.Add(reader.GetInt32(0));
-            }
-            reader.Close();
-
-            // 👥 Génération des relations FOLLOWERS
-            var followerInsertValues = new HashSet<(int, int)>();
-
-            foreach (var userId in insertedUserIds)
-            {
-                var followerCount = random.Next(0, 21);
-                for (var j = 0; j < followerCount; j++)
+                while (reader.Read())
                 {
-                    var followedId = insertedUserIds[random.Next(insertedUserIds.Count)];
-                    if (followedId == userId || followerInsertValues.Contains((userId, followedId)))
-                        continue; // Éviter l'auto-follow et les doublons
-
-                    followerInsertValues.Add((userId, followedId));
+                    insertedUserIds.Add(reader.GetInt32(0));
                 }
             }
 
-            InsertBatch(command, "Followers", "FollowerId, FollowedId", followerInsertValues, batchSize);
-
-            // 🛒 Génération des relations PURCHASES
+            var followerInsertValues = new HashSet<(int, int)>();
             var purchaseInsertValues = new List<(int, int)>();
 
-            foreach (var userId in insertedUserIds)
+            for (var i = 0; i < userCount; i++)
             {
+                var userId = insertedUserIds[i];
+                var followerCount = random.Next(0, 21);
+
+                for (var j = 0; j < followerCount; j++)
+                {
+                    var followedId = insertedUserIds[random.Next(insertedUserIds.Count)];
+                    if (followedId != userId && !followerInsertValues.Contains((userId, followedId)))
+                    {
+                        followerInsertValues.Add((userId, followedId));
+                    }
+                }
+
                 var purchaseCount = random.Next(0, 6);
                 for (var j = 0; j < purchaseCount; j++)
                 {
-                    var productId = productIds[random.Next(productIds.Count)]; // ✅ Sélection de produits valides
+                    var productId = productIds[random.Next(productIds.Count)];
                     purchaseInsertValues.Add((userId, productId));
                 }
             }
 
+            InsertBatch(command, "Followers", "FollowerId, FollowedId", followerInsertValues, batchSize);
             InsertBatch(command, "Purchases", "UserId, ProductId", purchaseInsertValues, batchSize);
 
             transaction.Commit();
-            Console.WriteLine($"✅ {userCount} utilisateurs ajoutés avec succès !");
+            Console.WriteLine($"{userCount} utilisateurs ajoutés avec succès !");
         }
         catch (Exception ex)
         {
             transaction.Rollback();
-            Console.WriteLine($"❌ Erreur : {ex.Message}");
+            Console.WriteLine($"Erreur : {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// Insère des données en lots dans une table SQL.
-    /// </summary>
     private void InsertBatch(SqlCommand command, string tableName, string columns, IEnumerable<(int, int)> values, int batchSize)
     {
         var batchList = new List<string>();
+        int currentBatchSize = 0;
 
         foreach (var (val1, val2) in values)
         {
             batchList.Add($"({val1}, {val2})");
+            currentBatchSize++;
 
-            if (batchList.Count >= batchSize)
+            if (currentBatchSize >= 1000)
             {
                 command.CommandText = $"INSERT INTO {tableName} ({columns}) VALUES {string.Join(", ", batchList)};";
                 command.ExecuteNonQuery();
                 batchList.Clear();
+                currentBatchSize = 0;
             }
         }
 

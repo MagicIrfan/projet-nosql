@@ -68,13 +68,10 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
         try
         {
-            // ❌ Supprimer toutes les relations FOLLOWS et BOUGHT, ainsi que les utilisateurs (sauf les produits)
             session.ExecuteWriteAsync(async tx =>
             {
-                // Supprimer les relations FOLLOWS et BOUGHT
-                await tx.RunAsync("MATCH (u:User)-[r]->(n) DELETE r;");  // Supprime toutes les relations des utilisateurs
+                await tx.RunAsync("MATCH (u:User)-[r]->(n) DELETE r;");
 
-                // Supprimer les utilisateurs, mais garder les produits intacts
                 await tx.RunAsync("MATCH (u:User) DELETE u;");
             }).Wait();
 
@@ -86,25 +83,16 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         }
     }
 
-    public void AddUsers(int userCount, int batchSize = 100)
+    public void AddUsers(int userCount)
     {
         using var session = GetSession();
         var random = new Random();
 
         try
         {
-            // ❌ SUPPRIMER TOUT AVANT D'AJOUTER LES NOUVEAUX UTILISATEURS
-            session.ExecuteWriteAsync(async tx =>
-            {
-                await tx.RunAsync("MATCH(n) WHERE NOT n: Product DETACH DELETE n;");
-            }).Wait();
+            int batchSize = userCount / 10;
+            if (batchSize == 0) batchSize = 1;
 
-            Console.WriteLine("✅ Base de données nettoyée.");
-
-            // 🔍 Récupérer le nombre d'utilisateurs existants (après suppression = 0)
-            var currentUserCount = 0;
-
-            // 🆕 Création des utilisateurs en une seule requête UNWIND
             var userNames = Enumerable.Range(1, userCount)
                                       .Select(i => $"User{i}")
                                       .ToList();
@@ -115,10 +103,10 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                                   new { userNames });
             }).Wait();
 
-            Console.WriteLine($"✅ {userCount} utilisateurs ajoutés.");
+            Console.WriteLine($"{userCount} utilisateurs ajoutés.");
 
-            // Récupérer les UserIds des utilisateurs nouvellement insérés
             var insertedUserIds = new List<int>();
+
             session.ExecuteReadAsync(async tx =>
             {
                 var result = await tx.RunAsync("MATCH (u:User) WHERE u.name IN $userNames RETURN u.name AS name, id(u) AS userId",
@@ -130,39 +118,34 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                 }
             }).Wait();
 
-            // Générer les relations FOLLOWS et BOUGHT
             var followRelationships = new List<(int, int)>();
             var purchaseRelationships = new List<(int, int)>();
 
             foreach (var userId in insertedUserIds)
             {
-                // 🎯 Générer des relations FOLLOWS aléatoires
                 var followerCount = random.Next(0, 21);
                 for (int j = 0; j < followerCount; j++)
                 {
                     var followedIndex = insertedUserIds[random.Next(insertedUserIds.Count)];
-                    if (followedIndex == userId) continue; // Un utilisateur ne peut pas se suivre lui-même
+                    if (followedIndex == userId) continue;
                     followRelationships.Add((userId, followedIndex));
                 }
-
-                // 🛒 Générer des relations BOUGHT aléatoires
                 var purchaseCount = random.Next(0, 6);
                 for (int j = 0; j < purchaseCount; j++)
                 {
-                    var productId = random.Next(1, 6); // ID de produit aléatoire entre 1 et 5
+                    var productId = random.Next(1, 6);
                     purchaseRelationships.Add((userId, productId));
                 }
             }
 
-            // 🚀 Exécuter les relations en batch
             ExecuteBatch(session, "FOLLOWS", followRelationships, batchSize);
             ExecuteBatch(session, "BOUGHT", purchaseRelationships, batchSize);
 
-            Console.WriteLine("✅ Relations ajoutées avec succès.");
+            Console.WriteLine("Relations ajoutées avec succès.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Erreur lors de l'ajout : {ex.Message}");
+            Console.WriteLine($"Erreur lors de l'ajout : {ex.Message}");
         }
     }
 
@@ -183,7 +166,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                     MATCH (p:Product) WHERE p.ProductId = rel.Item2
                     CREATE (a)-[:BOUGHT]->(p)";
 
-                // Utilisation d'un format explicite (d'un objet avec Item1 et Item2)
                 var structuredBatch = batch.Select(rel => new { Item1 = rel.Item1, Item2 = rel.Item2 }).ToList();
 
                 await tx.RunAsync(relationQuery, new { relationships = structuredBatch });
