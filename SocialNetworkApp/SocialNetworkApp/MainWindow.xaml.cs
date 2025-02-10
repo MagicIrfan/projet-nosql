@@ -31,14 +31,15 @@ public partial class MainWindow
             LoadingProgressBar.Visibility = Visibility.Visible;
 
             var stopwatch = new Stopwatch();
-
+            await Task.Run(() => _sqlServerDatabase.DeleteExistingData());
             stopwatch.Start();
             await Task.Run(() => _sqlServerDatabase.AddUsers(userCount)); 
             stopwatch.Stop();
             SqlServerTimeStatus.Text = $"{stopwatch.ElapsedMilliseconds} ms";
 
+            await Task.Run(() => _neo4JDatabase.DeleteExistingData());
             stopwatch.Restart();
-            await Task.Run(() => _neo4JDatabase.AddUsers(userCount));  
+            await _neo4JDatabase.AddUsers(userCount);
             stopwatch.Stop();
             Neo4JTimeStatus.Text = $"{stopwatch.ElapsedMilliseconds} ms";
         }

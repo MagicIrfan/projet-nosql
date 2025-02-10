@@ -1,4 +1,5 @@
 ﻿using Microsoft.Data.SqlClient;
+using System.Data;
 
 namespace SocialNetworkApp.DAL;
 
@@ -8,80 +9,147 @@ public class SqlServerDatabase(string connectionString) : IDisposable
     {
         return new SqlConnection(connectionString);
     }
-    
-    public void AddUsers(int userCount)
+
+    public void DeleteExistingData()
     {
         using var connection = GetConnection();
         connection.Open();
-        var command = connection.CreateCommand();
 
-        command.CommandText = "SELECT COUNT(*) FROM Users;";
-        var currentUserCount = (int)command.ExecuteScalar();
-
-        var transaction = connection.BeginTransaction();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
 
         try
         {
-            var userInsertValues = new List<string>();
-
-            for (var i = 0; i < userCount; i++)
-            {
-                var userName = "User" + (currentUserCount + i + 1);
-                userInsertValues.Add($"('{userName}')");
-            }
-
-            command.CommandText = $"INSERT INTO Users (UserName) VALUES {string.Join(", ", userInsertValues)};";
+            command.CommandText = "DELETE FROM Purchases; DELETE FROM Followers; DELETE FROM Users;";
             command.ExecuteNonQuery();
 
-            for (var i = 0; i < userCount; i++)
-            {
-                var followerCount = new Random().Next(0, 21);
-                for (var j = 0; j < followerCount; j++)
-                {
-                    try
-                    {
-                        var followedId = new Random().Next(currentUserCount + 1, currentUserCount + userCount);
-
-                        command.CommandText =
-                            $"INSERT INTO Followers (FollowerId, FollowedId) VALUES ({currentUserCount + i + 1}, {followedId});";
-                        command.ExecuteNonQuery();
-                    }
-                    catch (Exception _)
-                    {
-                        continue;
-                    }
-                    
-                }
-            }
-
-            var purchaseInsertValues = new List<string>();
-
-            for (var i = 0; i < userCount; i++)
-            {
-                var purchaseCount = new Random().Next(0, 6);
-                for (var j = 0; j < purchaseCount; j++)
-                {
-                    var productId = new Random().Next(1, 6);
-                    purchaseInsertValues.Add($"({currentUserCount + i + 1}, {productId})");
-                }
-            }
-
-            if (purchaseInsertValues.Count != 0)
-            {
-                command.CommandText = $"INSERT INTO Purchases (UserId, ProductId) VALUES {string.Join(", ", purchaseInsertValues)};";
-                command.ExecuteNonQuery();
-            }
-
             transaction.Commit();
+            Console.WriteLine("Données existantes supprimées.");
         }
         catch (Exception ex)
         {
             transaction.Rollback();
-            Console.WriteLine($"Erreur lors de l'ajout : {ex.Message}");
+            Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
         }
     }
-    
+    public void AddUsers(int userCount)
+    {
+        using var connection = GetConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        var random = new Random();
+
+        try
+        {
+            int batchSize = 1000;
+
+            command.CommandText = "SELECT ProductId FROM Products;";
+            var productIds = new List<int>();
+            using (var productReader = command.ExecuteReader())
+            {
+                while (productReader.Read())
+                {
+                    productIds.Add(productReader.GetInt32(0));
+                }
+            }
+
+            if (productIds.Count == 0)
+            {
+                throw new Exception("Aucun produit disponible dans la table Products !");
+            }
+
+            var userInsertValues = new List<string>();
+            for (var i = 0; i < userCount; i++)
+            {
+                var userName = $"User{i + 1}";
+                userInsertValues.Add($"('{userName}')");
+
+                if ((i + 1) % batchSize == 0 || i == userCount - 1)
+                {
+                    command.CommandText = $"INSERT INTO Users (UserName) VALUES {string.Join(", ", userInsertValues)};";
+                    command.ExecuteNonQuery();
+                    userInsertValues.Clear();
+                }
+            }
+
+            var insertedUserIds = new List<int>();
+            command.CommandText = "SELECT TOP (@userCount) UserId FROM Users ORDER BY UserId DESC";
+            command.Parameters.AddWithValue("@userCount", userCount);
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    insertedUserIds.Add(reader.GetInt32(0));
+                }
+            }
+
+            var followerInsertValues = new HashSet<(int, int)>();
+            var purchaseInsertValues = new List<(int, int)>();
+
+            for (var i = 0; i < userCount; i++)
+            {
+                var userId = insertedUserIds[i];
+                var followerCount = random.Next(0, 21);
+
+                for (var j = 0; j < followerCount; j++)
+                {
+                    var followedId = insertedUserIds[random.Next(insertedUserIds.Count)];
+                    if (followedId != userId && !followerInsertValues.Contains((userId, followedId)))
+                    {
+                        followerInsertValues.Add((userId, followedId));
+                    }
+                }
+
+                var purchaseCount = random.Next(0, 6);
+                for (var j = 0; j < purchaseCount; j++)
+                {
+                    var productId = productIds[random.Next(productIds.Count)];
+                    purchaseInsertValues.Add((userId, productId));
+                }
+            }
+
+            InsertBatch(command, "Followers", "FollowerId, FollowedId", followerInsertValues, batchSize);
+            InsertBatch(command, "Purchases", "UserId, ProductId", purchaseInsertValues, batchSize);
+
+            transaction.Commit();
+            Console.WriteLine($"{userCount} utilisateurs ajoutés avec succès !");
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+            Console.WriteLine($"Erreur : {ex.Message}");
+        }
+    }
+
+    private void InsertBatch(SqlCommand command, string tableName, string columns, IEnumerable<(int, int)> values, int batchSize)
+    {
+        var batchList = new List<string>();
+        int currentBatchSize = 0;
+
+        foreach (var (val1, val2) in values)
+        {
+            batchList.Add($"({val1}, {val2})");
+            currentBatchSize++;
+
+            if (currentBatchSize >= 1000)
+            {
+                command.CommandText = $"INSERT INTO {tableName} ({columns}) VALUES {string.Join(", ", batchList)};";
+                command.ExecuteNonQuery();
+                batchList.Clear();
+                currentBatchSize = 0;
+            }
+        }
+
+        if (batchList.Count > 0)
+        {
+            command.CommandText = $"INSERT INTO {tableName} ({columns}) VALUES {string.Join(", ", batchList)};";
+            command.ExecuteNonQuery();
+        }
+    }
+
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowers(string name, int depth)
     {
         var products = new List<(string ProductName, int Count)>();

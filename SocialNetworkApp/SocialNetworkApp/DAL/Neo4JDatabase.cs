@@ -61,81 +61,120 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
         return products;
     }
-    
-   public void AddUsers(int userCount)
+
+    public void DeleteExistingData()
     {
         using var session = GetSession();
 
-        var result = session.RunAsync("MATCH (u:User) RETURN COUNT(u) AS currentUserCount").Result;
-        result.FetchAsync().Wait();
-        var currentUserCount = result.Current["currentUserCount"].As<int>();
-
-        using var tx = session.BeginTransactionAsync().Result;
-        
         try
         {
-            var userNames = new List<string>();
-            var followerRelationships = new List<string>();
-            var purchaseRelationships = new List<string>();
-
-            for (var i = 0; i < userCount; i++)
+            session.ExecuteWriteAsync(async tx =>
             {
-                userNames.Add($"'User{currentUserCount + i + 1}'");
-            }
+                await tx.RunAsync("MATCH (u:User)-[r]->(n) DELETE r;");
 
-            tx.RunAsync($"UNWIND [{string.Join(", ", userNames)}] AS name CREATE (:User {{name: name}});").Wait();
+                await tx.RunAsync("MATCH (u:User) DELETE u;");
+            }).Wait();
 
-            for (var i = 0; i < userCount; i++)
-            {
-                var followerCount = new Random().Next(0, 21);
-                for (var j = 0; j < followerCount; j++)
-                {
-                    var followedId = new Random().Next(1, currentUserCount + userCount + 1);
-                    var followerName = $"User{currentUserCount + i + 1}";
-                    var followedName = $"User{currentUserCount + followedId}";
-                    followerRelationships.Add($"MATCH (a:User {{name: '{followerName}'}}), (b:User {{name: '{followedName}'}}) CREATE (a)-[:FOLLOWS]->(b)");
-                }
-            }
-
-            if (followerRelationships.Count != 0)
-            {
-                foreach (var relationship in followerRelationships)
-                {
-                    tx.RunAsync(relationship).Wait();
-                }
-            }
-
-            for (var i = 0; i < userCount; i++)
-            {
-                var purchaseCount = new Random().Next(0, 6);
-                for (var j = 0; j < purchaseCount; j++)
-                {
-                    var productId = new Random().Next(1, 6);
-                    var userName = $"User{currentUserCount + i + 1}";
-                    var productName = $"Product{productId}";
-                    purchaseRelationships.Add($"MATCH (u:User {{name: '{userName}'}}), (p:Product {{name: '{productName}'}}) CREATE (u)-[:BOUGHT]->(p)");
-                }
-            }
-
-            if (purchaseRelationships.Count != 0)
-            {
-                foreach (var relationship in purchaseRelationships)
-                {
-                    tx.RunAsync(relationship).Wait();
-                }
-            }
-
-            tx.CommitAsync().Wait();
+            Console.WriteLine("Données existantes supprimées (produits conservés).");
         }
         catch (Exception ex)
         {
-            tx.RollbackAsync().Wait();
+            Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
+        }
+    }
+
+    public async Task AddUsers(int userCount)
+    {
+        using var session = GetSession();
+        var random = new Random();
+
+        try
+        {
+            int batchSize = userCount / 10;
+            if (batchSize == 0) batchSize = 1;
+
+            var userNames = Enumerable.Range(1, userCount)
+                                      .Select(i => $"User{i}")
+                                      .ToList();
+
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync("UNWIND $userNames AS name CREATE (:User {name: name})",
+                                  new { userNames });
+            });
+
+            Console.WriteLine($"{userCount} utilisateurs ajoutés.");
+
+            var productNames = new List<string>();
+            await session.ExecuteReadAsync(async tx =>
+            {
+                var result = await tx.RunAsync("MATCH (p:Product) RETURN p.name AS productName");
+                var records = await result.ToListAsync();
+                foreach (var record in records)
+                {
+                    productNames.Add(record["productName"].As<string>());
+                }
+            });
+
+            if (productNames.Count == 0)
+            {
+                throw new Exception("Aucun produit trouvé dans la base de données !");
+            }
+
+            var followRelationships = new List<(string, string)>();
+            var purchaseRelationships = new List<(string, string)>();
+
+            foreach (var userName in userNames)
+            {
+                var followerCount = random.Next(0, 21);
+                for (int j = 0; j < followerCount; j++)
+                {
+                    var followedName = userNames[random.Next(userNames.Count)];
+                    if (followedName == userName) continue;
+                    followRelationships.Add((userName, followedName));
+                }
+                var purchaseCount = random.Next(0, 6);
+                for (int j = 0; j < purchaseCount; j++)
+                {
+                    var productName = productNames[random.Next(productNames.Count)];
+                    purchaseRelationships.Add((userName, productName));
+                }
+            }
+
+            await ExecuteBatchAsync(session, "FOLLOWS", followRelationships, batchSize);
+            await ExecuteBatchAsync(session, "BOUGHT", purchaseRelationships, batchSize);
+
+            Console.WriteLine("Relations ajoutées avec succès.");
+        }
+        catch (Exception ex)
+        {
             Console.WriteLine($"Erreur lors de l'ajout : {ex.Message}");
         }
     }
 
+    private async Task ExecuteBatchAsync(IAsyncSession session, string relationType, List<(string, string)> relationships, int batchSize)
+    {
+        var relationQuery = relationType == "FOLLOWS"
+            ? @"UNWIND $relationships AS rel
+           MATCH (a:User) WHERE a.name = rel.Item1
+           MATCH (b:User) WHERE b.name = rel.Item2
+           CREATE (a)-[:FOLLOWS]->(b)"
+            : @"UNWIND $relationships AS rel
+           MATCH (a:User) WHERE a.name = rel.Item1
+           MATCH (p:Product) WHERE p.name = rel.Item2
+           CREATE (a)-[:BOUGHT]->(p)";
 
+        for (int i = 0; i < relationships.Count; i += batchSize)
+        {
+            var batch = relationships.Skip(i).Take(batchSize).ToList();
+            var structuredBatch = batch.Select(rel => new { Item1 = rel.Item1, Item2 = rel.Item2 }).ToList();
 
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync(relationQuery, new { relationships = structuredBatch });
+            });
+        }
+    }
 
     public void Dispose()
     {
