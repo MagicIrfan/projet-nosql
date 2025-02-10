@@ -39,7 +39,7 @@ public partial class MainWindow
 
             await Task.Run(() => _neo4JDatabase.DeleteExistingData());
             stopwatch.Restart();
-            await Task.Run(() => _neo4JDatabase.AddUsers(userCount));  
+            await _neo4JDatabase.AddUsers(userCount);
             stopwatch.Stop();
             Neo4JTimeStatus.Text = $"{stopwatch.ElapsedMilliseconds} ms";
         }

@@ -75,15 +75,15 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                 await tx.RunAsync("MATCH (u:User) DELETE u;");
             }).Wait();
 
-            Console.WriteLine("✅ Données existantes supprimées (produits conservés).");
+            Console.WriteLine("Données existantes supprimées (produits conservés).");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Erreur lors de la suppression des données : {ex.Message}");
+            Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
         }
     }
 
-    public void AddUsers(int userCount)
+    public async Task AddUsers(int userCount)
     {
         using var session = GetSession();
         var random = new Random();
@@ -97,49 +97,52 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                                       .Select(i => $"User{i}")
                                       .ToList();
 
-            session.ExecuteWriteAsync(async tx =>
+            await session.ExecuteWriteAsync(async tx =>
             {
                 await tx.RunAsync("UNWIND $userNames AS name CREATE (:User {name: name})",
                                   new { userNames });
-            }).Wait();
+            });
 
             Console.WriteLine($"{userCount} utilisateurs ajoutés.");
 
-            var insertedUserIds = new List<int>();
-
-            session.ExecuteReadAsync(async tx =>
+            var productNames = new List<string>();
+            await session.ExecuteReadAsync(async tx =>
             {
-                var result = await tx.RunAsync("MATCH (u:User) WHERE u.name IN $userNames RETURN u.name AS name, id(u) AS userId",
-                    new { userNames });
+                var result = await tx.RunAsync("MATCH (p:Product) RETURN p.name AS productName");
                 var records = await result.ToListAsync();
                 foreach (var record in records)
                 {
-                    insertedUserIds.Add(record["userId"].As<int>());
+                    productNames.Add(record["productName"].As<string>());
                 }
-            }).Wait();
+            });
 
-            var followRelationships = new List<(int, int)>();
-            var purchaseRelationships = new List<(int, int)>();
+            if (productNames.Count == 0)
+            {
+                throw new Exception("Aucun produit trouvé dans la base de données !");
+            }
 
-            foreach (var userId in insertedUserIds)
+            var followRelationships = new List<(string, string)>();
+            var purchaseRelationships = new List<(string, string)>();
+
+            foreach (var userName in userNames)
             {
                 var followerCount = random.Next(0, 21);
                 for (int j = 0; j < followerCount; j++)
                 {
-                    var followedIndex = insertedUserIds[random.Next(insertedUserIds.Count)];
-                    if (followedIndex == userId) continue;
-                    followRelationships.Add((userId, followedIndex));
+                    var followedName = userNames[random.Next(userNames.Count)];
+                    if (followedName == userName) continue;
+                    followRelationships.Add((userName, followedName));
                 }
                 var purchaseCount = random.Next(0, 6);
                 for (int j = 0; j < purchaseCount; j++)
                 {
-                    var productId = random.Next(1, 6);
-                    purchaseRelationships.Add((userId, productId));
+                    var productName = productNames[random.Next(productNames.Count)];
+                    purchaseRelationships.Add((userName, productName));
                 }
             }
 
-            ExecuteBatch(session, "FOLLOWS", followRelationships, batchSize);
-            ExecuteBatch(session, "BOUGHT", purchaseRelationships, batchSize);
+            await ExecuteBatchAsync(session, "FOLLOWS", followRelationships, batchSize);
+            await ExecuteBatchAsync(session, "BOUGHT", purchaseRelationships, batchSize);
 
             Console.WriteLine("Relations ajoutées avec succès.");
         }
@@ -149,27 +152,27 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         }
     }
 
-    private void ExecuteBatch(IAsyncSession session, string relationType, List<(int, int)> relationships, int batchSize)
+    private async Task ExecuteBatchAsync(IAsyncSession session, string relationType, List<(string, string)> relationships, int batchSize)
     {
+        var relationQuery = relationType == "FOLLOWS"
+            ? @"UNWIND $relationships AS rel
+           MATCH (a:User) WHERE a.name = rel.Item1
+           MATCH (b:User) WHERE b.name = rel.Item2
+           CREATE (a)-[:FOLLOWS]->(b)"
+            : @"UNWIND $relationships AS rel
+           MATCH (a:User) WHERE a.name = rel.Item1
+           MATCH (p:Product) WHERE p.name = rel.Item2
+           CREATE (a)-[:BOUGHT]->(p)";
+
         for (int i = 0; i < relationships.Count; i += batchSize)
         {
             var batch = relationships.Skip(i).Take(batchSize).ToList();
-            session.ExecuteWriteAsync(async tx =>
+            var structuredBatch = batch.Select(rel => new { Item1 = rel.Item1, Item2 = rel.Item2 }).ToList();
+
+            await session.ExecuteWriteAsync(async tx =>
             {
-                string relationQuery = relationType == "FOLLOWS"
-                    ? @"UNWIND $relationships AS rel
-                    MATCH (a:User) WHERE id(a) = rel.Item1
-                    MATCH (b:User) WHERE id(b) = rel.Item2
-                    CREATE (a)-[:FOLLOWS]->(b)"
-                    : @"UNWIND $relationships AS rel
-                    MATCH (a:User) WHERE id(a) = rel.Item1
-                    MATCH (p:Product) WHERE p.ProductId = rel.Item2
-                    CREATE (a)-[:BOUGHT]->(p)";
-
-                var structuredBatch = batch.Select(rel => new { Item1 = rel.Item1, Item2 = rel.Item2 }).ToList();
-
                 await tx.RunAsync(relationQuery, new { relationships = structuredBatch });
-            }).Wait();
+            });
         }
     }
 
