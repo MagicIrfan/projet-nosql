@@ -5,21 +5,17 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:SocialNetworkApp"
         mc:Ignorable="d"
-        Title="Social Analysis Tool" Height="600" Width="1200">
+        Title="Social Analysis Tool" Height="900" Width="1200">
     <Grid>
         <StackPanel Margin="10">
-            
-            <!-- Zone pour ajouter des utilisateurs -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="5">
                 <TextBlock Text="Nombre d'utilisateurs à ajouter : " VerticalAlignment="Center" Margin="5"/>
                 <TextBox x:Name="UserCountTextBox" Width="100" Margin="5"/>
                 <Button Content="Ajouter et tester" Width="200" Margin="5" Click="AddUsersAndTest_Click"/>
             </StackPanel>
 
-            <!-- Séparateur -->
             <Separator Margin="10"/>
 
-            <!-- Inputs pour la requête -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="5">
                 <TextBlock Text="Profondeur : " VerticalAlignment="Center" Margin="5"/>
                 <TextBox x:Name="DepthTextBox" Width="100" Margin="5"/>
@@ -30,14 +26,12 @@
                 <Button Content="Obtenir produits" Width="180" Margin="5" Click="GetProductsFromFollowers_Click"/>
             </StackPanel>
 
-            <!-- Conteneur des résultats -->
             <Grid Margin="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <!-- Résultats SQL Server -->
                 <GroupBox Header="Résultats SQL Server" Grid.Column="0" Margin="5">
                     <StackPanel Margin="5">
                         <ListBox x:Name="SqlServerProductsListBox" Width="350" Height="200"/>
@@ -46,7 +40,6 @@
                     </StackPanel>
                 </GroupBox>
 
-                <!-- Résultats Neo4j -->
                 <GroupBox Header="Résultats Neo4j" Grid.Column="1" Margin="5">
                     <StackPanel Margin="5">
                         <ListBox x:Name="Neo4JProductsListBox" Width="350" Height="200"/>
@@ -55,8 +48,40 @@
                     </StackPanel>
                 </GroupBox>
             </Grid>
+            
+            <Separator Margin="10"/>
+            
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="5">
+                <TextBlock Text="Profondeur : " VerticalAlignment="Center" Margin="5"/>
+                <TextBox x:Name="DepthTextBox2" Width="100" Margin="5"/>
+                <TextBlock Text="Nom de du produit : " VerticalAlignment="Center" Margin="5"/>
+                <TextBox x:Name="ProductNameTextBox2" Width="150" Margin="5"/>
+                <Button Content="Obtenir nb Followers" Width="180" Margin="5" Click="GetNbFollowersFromProduct_Click"/>
+            </StackPanel>
 
-            <!-- ProgressBar centrée -->
+            <Grid Margin="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <GroupBox Header="Résultats SQL Server" Grid.Column="0" Margin="5">
+                    <StackPanel Margin="5">
+                        <ListBox x:Name="SqlServerProductsListBox2" Width="350" Height="100"/>
+                        <TextBlock Text="Temps SQL Server : " Margin="5"/>
+                        <TextBlock x:Name="SqlServerTimeStatus2" Text="N/A" Foreground="Gray" Margin="5"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="Résultats Neo4j" Grid.Column="1" Margin="5">
+                    <StackPanel Margin="5">
+                        <ListBox x:Name="Neo4JProductsListBox2" Width="350" Height="100"/>
+                        <TextBlock Text="Temps Neo4j : " Margin="5"/>
+                        <TextBlock x:Name="Neo4JTimeStatus2" Text="N/A" Foreground="Gray" Margin="5"/>
+                    </StackPanel>
+                </GroupBox>
+            </Grid>
+
             <ProgressBar x:Name="LoadingProgressBar" Width="300" Height="20" 
                          IsIndeterminate="True" Visibility="Collapsed" 
                          HorizontalAlignment="Center" Margin="10"/>

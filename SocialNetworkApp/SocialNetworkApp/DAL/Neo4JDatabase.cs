@@ -36,6 +36,30 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         return products;
     }
     
+    public async Task<int> GetNbUserOrderedProductByDepth(string name, int depth)
+    {
+        await using var session = GetSession();
+
+        var query = $@"
+        MATCH (u:User)-[:BOUGHT]->(p:Product {{name: '{{name}}'}})
+        WITH p, COLLECT(DISTINCT u) AS level0Users
+
+        MATCH (f:User)-[:FOLLOWS*{{depth}}]->(target:User)-[:BOUGHT]->(p)
+        WHERE target IN level0Users
+        AND EXISTS {{ MATCH (f)-[:BOUGHT]->(p) }} 
+        RETURN COUNT(DISTINCT f) AS UserCount;
+        ";
+
+        var result = await session.RunAsync(query, new { name });
+
+        if (await result.FetchAsync()) 
+        {
+            return result.Current["UserCount"].As<int>();
+        }
+
+        return 0;
+    }
+    
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowersFilteredByProduct(string name, int depth, string product)
     {
         var products = new List<(string ProductName, int Count)>();

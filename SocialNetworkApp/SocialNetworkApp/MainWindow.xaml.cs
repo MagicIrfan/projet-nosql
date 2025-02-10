@@ -52,10 +52,57 @@ public partial class MainWindow
         }
     }
     
+    private async void GetNbFollowersFromProduct_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SqlServerTimeStatus2.Text = "";
+            Neo4JTimeStatus2.Text = "";
+            SqlServerProductsListBox2.Items.Clear();
+            Neo4JProductsListBox2.Items.Clear();
+            
+            var depth = int.Parse(DepthTextBox2.Text);
+            var productName = ProductNameTextBox2.Text;
+
+            LoadingProgressBar.Visibility = Visibility.Visible;
+            SqlServerProductsListBox.Items.Clear();
+            Neo4JProductsListBox.Items.Clear();
+
+            var stopwatch = new Stopwatch();
+
+            stopwatch.Start();
+            var nbFollowersSql = await Task.Run(() => _sqlServerDatabase.GetNbUserOrderedProductByDepth(productName, depth));
+            stopwatch.Stop();
+            SqlServerTimeStatus2.Text = $"{stopwatch.ElapsedMilliseconds} ms";
+
+            stopwatch.Restart();
+            var nbFollowersNeo4J = await Task.Run(() => _neo4JDatabase.GetNbUserOrderedProductByDepth(productName, depth));  
+            stopwatch.Stop();
+            Neo4JTimeStatus2.Text = $"{stopwatch.ElapsedMilliseconds} ms";
+
+            SqlServerProductsListBox2.Items.Add($"Nb followers: {nbFollowersSql}");
+            Neo4JProductsListBox2.Items.Add($"Nb followers: {nbFollowersNeo4J}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erreur : {ex.Message}");
+        }
+        finally
+        {
+            LoadingProgressBar.Visibility = Visibility.Collapsed;
+        }
+    }
+    
     private async void GetProductsFromFollowers_Click(object sender, RoutedEventArgs e)
     {
         try
         {
+            SqlServerTimeStatus.Text = "";
+            Neo4JTimeStatus.Text = "";
+            SqlServerProductsListBox.Items.Clear();
+            Neo4JProductsListBox.Items.Clear();
+            
+            
             var depth = int.Parse(DepthTextBox.Text);
             var userName = UserNameTextBox.Text;
             var productName = ProductNameTextBox.Text;
@@ -105,6 +152,4 @@ public partial class MainWindow
             LoadingProgressBar.Visibility = Visibility.Collapsed;
         }
     }
-
-
 }
