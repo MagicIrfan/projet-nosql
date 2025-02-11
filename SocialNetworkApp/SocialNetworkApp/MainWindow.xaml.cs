@@ -26,22 +26,36 @@ public partial class MainWindow
     {
         try
         {
-            var userCount = int.Parse(UserCountTextBox.Text);
-
+            SqlServerTimeStatus.Text = "N/A";
+            Neo4JTimeStatus.Text = "N/A";
+           var userCount = int.Parse(UserCountTextBox.Text);
             LoadingProgressBar.Visibility = Visibility.Visible;
 
-            var stopwatch = new Stopwatch();
             await Task.Run(() => _sqlServerDatabase.DeleteExistingData());
-            stopwatch.Start();
-            await Task.Run(() => _sqlServerDatabase.AddUsers(userCount)); 
-            stopwatch.Stop();
-            SqlServerTimeStatus.Text = $"{stopwatch.ElapsedMilliseconds} ms";
-
             await Task.Run(() => _neo4JDatabase.DeleteExistingData());
-            stopwatch.Restart();
-            await _neo4JDatabase.AddUsers(userCount);
-            stopwatch.Stop();
-            Neo4JTimeStatus.Text = $"{stopwatch.ElapsedMilliseconds} ms";
+
+            var sqlStopwatch = new Stopwatch();
+            var neo4jStopwatch = new Stopwatch();
+
+            sqlStopwatch.Start();
+            var sqlTask = Task.Run(() =>
+            {
+                _sqlServerDatabase.AddUsers(userCount);
+                sqlStopwatch.Stop();
+
+                Dispatcher.Invoke(() => SqlServerTimeStatus.Text = $"{sqlStopwatch.ElapsedMilliseconds} ms");
+            });
+
+            neo4jStopwatch.Start();
+            var neo4jTask = Task.Run(async () =>
+            {
+                await _neo4JDatabase.AddUsers(userCount);
+                neo4jStopwatch.Stop();
+
+                Dispatcher.Invoke(() => Neo4JTimeStatus.Text = $"{neo4jStopwatch.ElapsedMilliseconds} ms");
+            });
+
+            await Task.WhenAll(sqlTask, neo4jTask);
         }
         catch (Exception ex)
         {
@@ -52,7 +66,7 @@ public partial class MainWindow
             LoadingProgressBar.Visibility = Visibility.Collapsed;
         }
     }
-    
+
     private async void GetNbFollowersFromProduct_Click(object sender, RoutedEventArgs e)
     {
         try
