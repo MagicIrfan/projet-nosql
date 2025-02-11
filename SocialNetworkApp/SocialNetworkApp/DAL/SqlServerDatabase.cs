@@ -159,22 +159,25 @@ public class SqlServerDatabase(string connectionString) : IDisposable
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-        WITH followers_cte AS (
-            SELECT DISTINCT o.UserId, 0 AS level
-            FROM Purchases o
-            JOIN Products p ON o.ProductId = p.ProductId
-            WHERE p.ProductName = @Name
+            WITH followers_cte AS (
+                SELECT DISTINCT o.UserId, 0 AS level
+                FROM Purchases o
+                JOIN Products p ON o.ProductId = p.ProductId
+                WHERE p.ProductName = @Name
 
-            UNION ALL
+                UNION ALL
 
-            SELECT f.FollowedId AS UserId, fc.level + 1
-            FROM Followers f
-            JOIN followers_cte fc ON f.FollowerID = fc.UserId
-            WHERE fc.level < @Depth
-        )
-        SELECT COUNT(DISTINCT UserId) AS UserCount
-        FROM followers_cte
-        WHERE level = @Depth;
+                SELECT f.FollowedId AS UserId, fc.level + 1
+                FROM Followers f
+                JOIN followers_cte fc ON f.FollowerID = fc.UserId
+                JOIN Purchases po ON f.FollowedId = po.UserId  
+                JOIN Products pp ON po.ProductId = pp.ProductId
+                WHERE pp.ProductName = @Name
+                AND fc.level < @Depth
+            )
+            SELECT COUNT(DISTINCT UserId) AS UserCount
+            FROM followers_cte
+            WHERE level = @Depth;
         ";
 
         command.Parameters.AddWithValue("@Name", name);
