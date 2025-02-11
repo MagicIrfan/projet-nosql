@@ -106,7 +106,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
             Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
         }
     }
-
     public async Task AddUsers(int userCount)
     {
         using var session = GetSession();
@@ -114,7 +113,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
         try
         {
-            int batchSize = userCount / 10;
+            int batchSize = userCount/10;  
             if (batchSize == 0) batchSize = 1;
 
             var userNames = Enumerable.Range(1, userCount)
@@ -123,8 +122,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
             await session.ExecuteWriteAsync(async tx =>
             {
-                await tx.RunAsync("UNWIND $userNames AS name CREATE (:User {name: name})",
-                                  new { userNames });
+                await tx.RunAsync("UNWIND $userNames AS name MERGE (:User {name: name})", new { userNames });
             });
 
             Console.WriteLine($"{userCount} utilisateurs ajoutés.");
@@ -134,10 +132,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
             {
                 var result = await tx.RunAsync("MATCH (p:Product) RETURN p.name AS productName");
                 var records = await result.ToListAsync();
-                foreach (var record in records)
-                {
-                    productNames.Add(record["productName"].As<string>());
-                }
+                productNames.AddRange(records.Select(record => record["productName"].As<string>()));
             });
 
             if (productNames.Count == 0)
@@ -157,6 +152,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                     if (followedName == userName) continue;
                     followRelationships.Add((userName, followedName));
                 }
+
                 var purchaseCount = random.Next(0, 6);
                 for (int j = 0; j < purchaseCount; j++)
                 {
@@ -180,18 +176,19 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
     {
         var relationQuery = relationType == "FOLLOWS"
             ? @"UNWIND $relationships AS rel
-           MATCH (a:User) WHERE a.name = rel.Item1
-           MATCH (b:User) WHERE b.name = rel.Item2
-           CREATE (a)-[:FOLLOWS]->(b)"
+           MERGE (a:User {name: rel.Item1})
+           MERGE (b:User {name: rel.Item2})
+           MERGE (a)-[:FOLLOWS]->(b)"
             : @"UNWIND $relationships AS rel
-           MATCH (a:User) WHERE a.name = rel.Item1
-           MATCH (p:Product) WHERE p.name = rel.Item2
-           CREATE (a)-[:BOUGHT]->(p)";
+           MERGE (a:User {name: rel.Item1})
+           MERGE (p:Product {name: rel.Item2})
+           MERGE (a)-[:BOUGHT]->(p)";
 
+        // Traiter par batchs
         for (int i = 0; i < relationships.Count; i += batchSize)
         {
             var batch = relationships.Skip(i).Take(batchSize).ToList();
-            var structuredBatch = batch.Select(rel => new { Item1 = rel.Item1, Item2 = rel.Item2 }).ToList();
+            var structuredBatch = batch.Select(rel => new { rel.Item1, rel.Item2 }).ToList();
 
             await session.ExecuteWriteAsync(async tx =>
             {
@@ -199,6 +196,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
             });
         }
     }
+
 
     public void Dispose()
     {
