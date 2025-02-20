@@ -2,8 +2,6 @@
 CREATE INDEX IF NOT EXISTS FOR (p:Product) ON (p.id);
 
 // Créer les produits
-CREATE (p1:Product {id: 1, name: 'Laptop'}),
-       (p2:Product {id: 2, name: 'Phone'}),
-       (p3:Product {id: 3, name: 'Tablet'}),
-       (p4:Product {id: 4, name: 'Smartwatch'}),
-       (p5:Product {id: 5, name: 'Headphones'});
+WITH range(1, 10000) AS ids
+UNWIND ids AS id
+CREATE (:Product {id: id, name: 'Product' + id});

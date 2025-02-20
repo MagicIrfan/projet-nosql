@@ -36,33 +36,35 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         return products;
     }
 
-    public async Task<int> GetNbUserOrderedProductByDepth(string name, int depth)
+    public async Task<Dictionary<int, int>> GetNbUserOrderedProductByDepth(string name, int depth)
     {
         await using var session = GetSession();
 
-        var query = @"
-    MATCH (u:User)-[:BOUGHT]->(p:Product)
-    WHERE p.name = $name
-    WITH p, COLLECT(DISTINCT u) AS level0Users
+        string query = $@"
+        MATCH (u:User)-[:BOUGHT]->(p:Product)
+        WHERE p.name = $name
+        WITH p, COLLECT(DISTINCT u) AS level0Users
 
-    MATCH (f:User)-[:FOLLOWS*]->(target:User)-[:BOUGHT]->(p)
-    WHERE target IN level0Users
-    AND EXISTS {
-        MATCH (f)-[:BOUGHT]->(p)
-    }
-    RETURN COUNT(DISTINCT f) AS UserCount;
-    ";
+        MATCH path = (f:User)-[:FOLLOWS*0..{depth}]->(target:User)
+        WHERE target IN level0Users
+        WITH f, MIN(LENGTH(path)) AS level
+        RETURN level, COUNT(DISTINCT f) AS UserCount
+        ORDER BY level;
+            ";
 
         var result = await session.RunAsync(query, new { name });
 
-        if (await result.FetchAsync())
+        var userCountsByLevel = new Dictionary<int, int>();
+
+        while (await result.FetchAsync())
         {
-            return result.Current["UserCount"].As<int>();
+            int level = result.Current["level"].As<int>();
+            int userCount = result.Current["UserCount"].As<int>();
+            userCountsByLevel[level] = userCount;
         }
 
-        return 0;
+        return userCountsByLevel;
     }
-
 
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowersFilteredByProduct(string name, int depth, string product)
     {
@@ -98,19 +100,16 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         {
             Console.WriteLine("Suppression des relations et des utilisateurs en cours...");
 
-            // Suppression des relations FOLLOWS entre utilisateurs
             await session.ExecuteWriteAsync(async tx =>
             {
                 await tx.RunAsync("MATCH (u:User)-[r:FOLLOWS]->(n:User) DELETE r;");
             });
-
-            // Suppression des relations BOUGHT entre utilisateurs et produits
+            
             await session.ExecuteWriteAsync(async tx =>
             {
                 await tx.RunAsync("MATCH (u:User)-[r:BOUGHT]->(p:Product) DELETE r;");
             });
 
-            // Suppression des utilisateurs
             await session.ExecuteWriteAsync(async tx =>
             {
                 await tx.RunAsync("MATCH (u:User) DELETE u;");
@@ -118,7 +117,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
             Console.WriteLine("Données supprimées. Vérification et création des index si nécessaire...");
 
-            // Création des index s'ils n'existent pas
             await session.ExecuteWriteAsync(async tx =>
             {
                 await tx.RunAsync("CREATE INDEX IF NOT EXISTS FOR (u:User) ON (u.id);");
@@ -149,12 +147,10 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
             Console.WriteLine("Insertion des utilisateurs en cours...");
 
-            // ✅ Insérer les utilisateurs par batch
             await ExecuteBatchUsers(session, userCount, batchSize);
 
             Console.WriteLine($"{userCount} utilisateurs ajoutés.");
 
-            // ✅ Récupérer tous les IDs des produits existants
             var productIds = await session.ExecuteReadAsync(async tx =>
             {
                 var result = await tx.RunAsync("MATCH (p:Product) RETURN p.id AS productId");
@@ -168,7 +164,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
             Console.WriteLine("Génération des relations en cours...");
 
-            // ✅ Insérer les relations par batch sans tout stocker en mémoire
             await GenerateAndInsertRelationships(session, userCount, productIds, batchSize);
 
             Console.WriteLine("Relations ajoutées avec succès.");
@@ -179,7 +174,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         }
     }
 
-    // 🔹 Insertion des utilisateurs en batch
     private async Task ExecuteBatchUsers(IAsyncSession session, int userCount, int batchSize)
     {
         for (int i = 1; i <= userCount; i += batchSize)
@@ -200,7 +194,6 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         }
     }
 
-    // 🔹 Génération et insertion des relations sans tout stocker en mémoire
     private async Task GenerateAndInsertRelationships(IAsyncSession session, int userCount, List<int> productIds, int batchSize)
     {
         var random = new Random();
@@ -230,13 +223,11 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
                 }
             }
 
-            // Insérer en batch
             await ExecuteBatch(session, "FOLLOWS", followBatch, batchSize);
             await ExecuteBatch(session, "BOUGHT", purchaseBatch, batchSize);
         }
     }
 
-    // 🔹 Exécute l'insertion des relations en batch
     private async Task ExecuteBatch(IAsyncSession session, string relationType, List<dynamic> relationships, int batchSize)
     {
         if (relationships.Count == 0) return;

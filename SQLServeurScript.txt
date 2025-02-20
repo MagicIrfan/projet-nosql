@@ -24,11 +24,19 @@ CREATE TABLE Followers (
     FOREIGN KEY (FollowedId) REFERENCES Users(UserId)
 );
 
-INSERT INTO Products (ProductName) VALUES 
-    ('Laptop'), ('Phone'), ('Tablet'), ('Smartwatch'), ('Headphones');
+CREATE PROCEDURE InsertProducts
+AS
+BEGIN
+    SET NOCOUNT ON;
 
-CREATE INDEX IDX_Followers_FollowerId ON Followers (FollowerId);
-CREATE INDEX IDX_Followers_FollowedId ON Followers (FollowedId);
-CREATE INDEX IDX_Purchases_UserId ON Purchases (UserId);
-CREATE INDEX IDX_Purchases_ProductId ON Purchases (ProductId);
+    DECLARE @i INT = 1;
+    WHILE @i <= 10000
+    BEGIN
+        INSERT INTO Products (ProductName)
+        VALUES ('Product' + CAST(@i AS VARCHAR(10)));
+
+        SET @i = @i + 1;
+    END
+END;
+EXEC InsertProducts;
 

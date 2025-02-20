@@ -95,8 +95,15 @@ public partial class MainWindow
             stopwatch.Stop();
             Neo4JTimeStatus2.Text = $"{stopwatch.ElapsedMilliseconds} ms";
 
-            SqlServerProductsListBox2.Items.Add($"Nb followers: {nbFollowersSql}");
-            Neo4JProductsListBox2.Items.Add($"Nb followers: {nbFollowersNeo4J}");
+            foreach (var entry in nbFollowersSql)
+            {
+                SqlServerProductsListBox2.Items.Add($"Niveau {entry.Key} : {entry.Value} followers");
+            }
+
+            foreach (var entry in nbFollowersNeo4J)
+            {
+                Neo4JProductsListBox2.Items.Add($"Niveau {entry.Key} : {entry.Value} followers");
+            }
         }
         catch (Exception ex)
         {

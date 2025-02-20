@@ -150,56 +150,60 @@ public class SqlServerDatabase(string connectionString) : IDisposable
         }
     }
 
-
-    public async Task<int> GetNbUserOrderedProductByDepth(string name, int depth)
+    public async Task<Dictionary<int, int>> GetNbUserOrderedProductByDepth(string name, int depth)
     {
         try
         {
             await using var connection = GetConnection();
             await connection.OpenAsync();
 
-            var command = connection.CreateCommand();
-            command.CommandTimeout = 0;
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = 0; 
             command.CommandText = @"
-        WITH followers_cte AS (
-            SELECT DISTINCT o.UserId, 0 AS level
+        WITH followers_cte (UserId, level) AS (
+            SELECT o.UserId, 0 AS level
             FROM Purchases o
             JOIN Products p ON o.ProductId = p.ProductId
             WHERE p.ProductName = @Name
 
-                UNION ALL
+            UNION ALL
 
-                SELECT f.FollowedId AS UserId, fc.level + 1
-                FROM Followers f
-                JOIN followers_cte fc ON f.FollowerID = fc.UserId
-                JOIN Purchases po ON f.FollowedId = po.UserId  
-                JOIN Products pp ON po.ProductId = pp.ProductId
-                WHERE pp.ProductName = @Name
-                AND fc.level < @Depth
-            )
-            SELECT COUNT(DISTINCT UserId) AS UserCount
-            FROM followers_cte
-            WHERE level = @Depth;
+            SELECT f.FollowedId, fc.level + 1
+            FROM Followers f
+            JOIN followers_cte fc ON f.FollowerID = fc.UserId
+            WHERE fc.level < @Depth
+        )
+        SELECT c.level, COUNT(DISTINCT c.UserId) AS UserCount
+        FROM followers_cte c
+        LEFT JOIN Purchases po ON c.UserId = po.UserId
+        LEFT JOIN Products pp ON po.ProductId = pp.ProductId AND pp.ProductName = @Name
+        GROUP BY c.level
+        ORDER BY c.level;
         ";
 
             command.Parameters.AddWithValue("@Name", name);
             command.Parameters.AddWithValue("@Depth", depth);
 
+            var result = new Dictionary<int, int>();
             await using var reader = await command.ExecuteReaderAsync();
 
-            if (await reader.ReadAsync())
+            while (await reader.ReadAsync())
             {
-                return reader.GetInt32(0);
+                int level = reader.GetInt32(0);
+                int userCount = reader.GetInt32(1);
+                result[level] = userCount;
             }
 
-            return 0;
+            return result;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Erreur dans GetNbUserOrderedProductByDepth : {ex.Message}");
-            return -1; // Retourne -1 pour signaler une erreur
+            Console.Error.WriteLine($"[ERROR] GetNbUserOrderedProductByDepth: {ex.Message}");
+            throw;
         }
     }
+
+
 
 
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowers(string name, int depth)
@@ -257,6 +261,7 @@ public class SqlServerDatabase(string connectionString) : IDisposable
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
+        command.CommandTimeout = 0;
         command.CommandText = @"
         WITH FollowersHierarchy AS (
             SELECT u.UserId, u.UserName, 0 AS Depth
