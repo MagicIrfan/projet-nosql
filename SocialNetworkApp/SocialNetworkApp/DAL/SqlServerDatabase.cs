@@ -150,20 +150,22 @@ public class SqlServerDatabase(string connectionString) : IDisposable
         }
     }
 
-    
+
     public async Task<int> GetNbUserOrderedProductByDepth(string name, int depth)
     {
+        try
+        {
+            await using var connection = GetConnection();
+            await connection.OpenAsync();
 
-        await using var connection = GetConnection();
-        await connection.OpenAsync();
-
-        var command = connection.CreateCommand();
-        command.CommandText = @"
-            WITH followers_cte AS (
-                SELECT DISTINCT o.UserId, 0 AS level
-                FROM Purchases o
-                JOIN Products p ON o.ProductId = p.ProductId
-                WHERE p.ProductName = @Name
+            var command = connection.CreateCommand();
+            command.CommandTimeout = 0;
+            command.CommandText = @"
+        WITH followers_cte AS (
+            SELECT DISTINCT o.UserId, 0 AS level
+            FROM Purchases o
+            JOIN Products p ON o.ProductId = p.ProductId
+            WHERE p.ProductName = @Name
 
                 UNION ALL
 
@@ -180,19 +182,26 @@ public class SqlServerDatabase(string connectionString) : IDisposable
             WHERE level = @Depth;
         ";
 
-        command.Parameters.AddWithValue("@Name", name);
-        command.Parameters.AddWithValue("@Depth", depth);
+            command.Parameters.AddWithValue("@Name", name);
+            command.Parameters.AddWithValue("@Depth", depth);
 
-        await using var reader = await command.ExecuteReaderAsync();
+            await using var reader = await command.ExecuteReaderAsync();
 
-        if (await reader.ReadAsync())
-        {
-            return reader.GetInt32(0);
+            if (await reader.ReadAsync())
+            {
+                return reader.GetInt32(0);
+            }
+
+            return 0;
         }
-    
-        return 0;
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erreur dans GetNbUserOrderedProductByDepth : {ex.Message}");
+            return -1; // Retourne -1 pour signaler une erreur
+        }
     }
-    
+
+
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowers(string name, int depth)
     {
         var products = new List<(string ProductName, int Count)>();
@@ -201,6 +210,7 @@ public class SqlServerDatabase(string connectionString) : IDisposable
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
+        command.CommandTimeout = 0;
         command.CommandText = @"
         WITH FollowersHierarchy AS (
             SELECT u.UserId, u.UserName, 0 AS Depth

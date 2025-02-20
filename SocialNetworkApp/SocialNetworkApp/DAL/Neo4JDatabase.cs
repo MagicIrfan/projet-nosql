@@ -35,31 +35,35 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
         return products;
     }
-    
+
     public async Task<int> GetNbUserOrderedProductByDepth(string name, int depth)
     {
         await using var session = GetSession();
 
-        var query = $@"
-        MATCH (u:User)-[:BOUGHT]->(p:Product {{name: '{{name}}'}})
-        WITH p, COLLECT(DISTINCT u) AS level0Users
+        var query = @"
+    MATCH (u:User)-[:BOUGHT]->(p:Product)
+    WHERE p.name = $name
+    WITH p, COLLECT(DISTINCT u) AS level0Users
 
-        MATCH (f:User)-[:FOLLOWS*{{depth}}]->(target:User)-[:BOUGHT]->(p)
-        WHERE target IN level0Users
-        AND EXISTS {{ MATCH (f)-[:BOUGHT]->(p) }} 
-        RETURN COUNT(DISTINCT f) AS UserCount;
-        ";
+    MATCH (f:User)-[:FOLLOWS*]->(target:User)-[:BOUGHT]->(p)
+    WHERE target IN level0Users
+    AND EXISTS {
+        MATCH (f)-[:BOUGHT]->(p)
+    }
+    RETURN COUNT(DISTINCT f) AS UserCount;
+    ";
 
         var result = await session.RunAsync(query, new { name });
 
-        if (await result.FetchAsync()) 
+        if (await result.FetchAsync())
         {
             return result.Current["UserCount"].As<int>();
         }
 
         return 0;
     }
-    
+
+
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowersFilteredByProduct(string name, int depth, string product)
     {
         var products = new List<(string ProductName, int Count)>();
@@ -86,26 +90,54 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         return products;
     }
 
-    public void DeleteExistingData()
+    public async Task DeleteExistingData()
     {
         using var session = GetSession();
 
         try
         {
-            session.ExecuteWriteAsync(async tx =>
+            Console.WriteLine("Suppression des relations et des utilisateurs en cours...");
+
+            // Suppression des relations FOLLOWS entre utilisateurs
+            await session.ExecuteWriteAsync(async tx =>
             {
-                await tx.RunAsync("MATCH (u:User)-[r]->(n) DELETE r;");
+                await tx.RunAsync("MATCH (u:User)-[r:FOLLOWS]->(n:User) DELETE r;");
+            });
 
+            // Suppression des relations BOUGHT entre utilisateurs et produits
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync("MATCH (u:User)-[r:BOUGHT]->(p:Product) DELETE r;");
+            });
+
+            // Suppression des utilisateurs
+            await session.ExecuteWriteAsync(async tx =>
+            {
                 await tx.RunAsync("MATCH (u:User) DELETE u;");
-            }).Wait();
+            });
 
-            Console.WriteLine("Données existantes supprimées (produits conservés).");
+            Console.WriteLine("Données supprimées. Vérification et création des index si nécessaire...");
+
+            // Création des index s'ils n'existent pas
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync("CREATE INDEX IF NOT EXISTS FOR (u:User) ON (u.id);");
+            });
+
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync("CREATE INDEX IF NOT EXISTS FOR (p:Product) ON (p.id);");
+            });
+
+            Console.WriteLine("Index vérifiés et créés si nécessaire.");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Erreur lors de la suppression des données : {ex.Message}");
         }
     }
+
+
     public async Task AddUsers(int userCount)
     {
         using var session = GetSession();
@@ -113,56 +145,31 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
 
         try
         {
-            int batchSize = userCount/10;  
-            if (batchSize == 0) batchSize = 1;
+            int batchSize = Math.Min(1000, userCount / 10);
 
-            var userNames = Enumerable.Range(1, userCount)
-                                      .Select(i => $"User{i}")
-                                      .ToList();
+            Console.WriteLine("Insertion des utilisateurs en cours...");
 
-            await session.ExecuteWriteAsync(async tx =>
-            {
-                await tx.RunAsync("UNWIND $userNames AS name MERGE (:User {name: name})", new { userNames });
-            });
+            // ✅ Insérer les utilisateurs par batch
+            await ExecuteBatchUsers(session, userCount, batchSize);
 
             Console.WriteLine($"{userCount} utilisateurs ajoutés.");
 
-            var productNames = new List<string>();
-            await session.ExecuteReadAsync(async tx =>
+            // ✅ Récupérer tous les IDs des produits existants
+            var productIds = await session.ExecuteReadAsync(async tx =>
             {
-                var result = await tx.RunAsync("MATCH (p:Product) RETURN p.name AS productName");
-                var records = await result.ToListAsync();
-                productNames.AddRange(records.Select(record => record["productName"].As<string>()));
+                var result = await tx.RunAsync("MATCH (p:Product) RETURN p.id AS productId");
+                return (await result.ToListAsync()).Select(record => record["productId"].As<int>()).ToList();
             });
 
-            if (productNames.Count == 0)
+            if (!productIds.Any())
             {
                 throw new Exception("Aucun produit trouvé dans la base de données !");
             }
 
-            var followRelationships = new List<(string, string)>();
-            var purchaseRelationships = new List<(string, string)>();
+            Console.WriteLine("Génération des relations en cours...");
 
-            foreach (var userName in userNames)
-            {
-                var followerCount = random.Next(0, 21);
-                for (int j = 0; j < followerCount; j++)
-                {
-                    var followedName = userNames[random.Next(userNames.Count)];
-                    if (followedName == userName) continue;
-                    followRelationships.Add((userName, followedName));
-                }
-
-                var purchaseCount = random.Next(0, 6);
-                for (int j = 0; j < purchaseCount; j++)
-                {
-                    var productName = productNames[random.Next(productNames.Count)];
-                    purchaseRelationships.Add((userName, productName));
-                }
-            }
-
-            await ExecuteBatchAsync(session, "FOLLOWS", followRelationships, batchSize);
-            await ExecuteBatchAsync(session, "BOUGHT", purchaseRelationships, batchSize);
+            // ✅ Insérer les relations par batch sans tout stocker en mémoire
+            await GenerateAndInsertRelationships(session, userCount, productIds, batchSize);
 
             Console.WriteLine("Relations ajoutées avec succès.");
         }
@@ -172,28 +179,85 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         }
     }
 
-    private async Task ExecuteBatchAsync(IAsyncSession session, string relationType, List<(string, string)> relationships, int batchSize)
+    // 🔹 Insertion des utilisateurs en batch
+    private async Task ExecuteBatchUsers(IAsyncSession session, int userCount, int batchSize)
     {
-        var relationQuery = relationType == "FOLLOWS"
-            ? @"UNWIND $relationships AS rel
-           MERGE (a:User {name: rel.Item1})
-           MERGE (b:User {name: rel.Item2})
-           MERGE (a)-[:FOLLOWS]->(b)"
-            : @"UNWIND $relationships AS rel
-           MERGE (a:User {name: rel.Item1})
-           MERGE (p:Product {name: rel.Item2})
-           MERGE (a)-[:BOUGHT]->(p)";
-
-        // Traiter par batchs
-        for (int i = 0; i < relationships.Count; i += batchSize)
+        for (int i = 1; i <= userCount; i += batchSize)
         {
-            var batch = relationships.Skip(i).Take(batchSize).ToList();
-            var structuredBatch = batch.Select(rel => new { rel.Item1, rel.Item2 }).ToList();
+            var usersBatch = Enumerable.Range(i, Math.Min(batchSize, userCount - i + 1))
+                                       .Select(id => new { Id = id, Name = $"User{id}" })
+                                       .ToList();
 
             await session.ExecuteWriteAsync(async tx =>
             {
-                await tx.RunAsync(relationQuery, new { relationships = structuredBatch });
+                await tx.RunAsync(@"
+            UNWIND $users AS user
+            CREATE (u:User {name: user.Name, id: user.Id})",
+                new { users = usersBatch });
             });
+
+            Console.WriteLine($"Batch {i} - {i + batchSize - 1} inséré.");
+        }
+    }
+
+    // 🔹 Génération et insertion des relations sans tout stocker en mémoire
+    private async Task GenerateAndInsertRelationships(IAsyncSession session, int userCount, List<int> productIds, int batchSize)
+    {
+        var random = new Random();
+
+        for (int i = 1; i <= userCount; i += batchSize)
+        {
+            var followBatch = new List<dynamic>();
+            var purchaseBatch = new List<dynamic>();
+
+            for (int j = i; j < i + batchSize && j <= userCount; j++)
+            {
+                int followerCount = random.Next(0, 21);
+                for (int k = 0; k < followerCount; k++)
+                {
+                    int followedId = random.Next(1, userCount + 1);
+                    if (followedId != j)
+                    {
+                        followBatch.Add(new { source = j, target = followedId });
+                    }
+                }
+
+                int purchaseCount = random.Next(0, 6);
+                for (int k = 0; k < purchaseCount; k++)
+                {
+                    int productId = productIds[random.Next(productIds.Count)];
+                    purchaseBatch.Add(new { source = j, target = productId });
+                }
+            }
+
+            // Insérer en batch
+            await ExecuteBatch(session, "FOLLOWS", followBatch, batchSize);
+            await ExecuteBatch(session, "BOUGHT", purchaseBatch, batchSize);
+        }
+    }
+
+    // 🔹 Exécute l'insertion des relations en batch
+    private async Task ExecuteBatch(IAsyncSession session, string relationType, List<dynamic> relationships, int batchSize)
+    {
+        if (relationships.Count == 0) return;
+
+        for (int i = 0; i < relationships.Count; i += batchSize)
+        {
+            var batch = relationships.Skip(i).Take(batchSize).ToList();
+
+            string targetNode = relationType == "FOLLOWS" ? "User" : "Product";
+
+            string query = $@"
+        UNWIND $relationships AS rel
+        MATCH (a:User {{id: rel.source}}), (b:{targetNode} {{id: rel.target}})
+        CREATE (a)-[:{relationType}]->(b)";
+
+            await session.ExecuteWriteAsync(async tx =>
+            {
+                await tx.RunAsync(query, new { relationships = batch });
+            });
+
+            Console.WriteLine($"Batch de {batch.Count} relations {relationType} inséré.");
         }
     }
 
