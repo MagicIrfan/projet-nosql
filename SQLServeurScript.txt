@@ -24,6 +24,15 @@ CREATE TABLE Followers (
     FOREIGN KEY (FollowedId) REFERENCES Users(UserId)
 );
 
+-- Données de test contrôlées sans spécifier d'ID (ils seront autogénérés)
+INSERT INTO Users (UserName) VALUES 
+    ('Alice'), ('Bob'), ('Charlie'), ('David'), ('Eve'),
+    ('Frank'), ('Grace'), ('Hannah'), ('Isaac'), ('Jack');
+
+INSERT INTO Products (ProductName) VALUES 
+    ('Laptop'), ('Phone'), ('Tablet'), ('Smartwatch'), ('Headphones');
+
+
 CREATE PROCEDURE InsertProducts
 AS
 BEGIN
@@ -40,3 +49,48 @@ BEGIN
 END;
 EXEC InsertProducts;
 
+-- -------------------------------------------------------------------------------------------------------
+
+-- A insérer après avoir crée les utilisateurs depuis l'application
+INSERT INTO Purchases (UserId, ProductId)
+SELECT 
+    u.UserId, p.ProductId
+FROM 
+    (SELECT UserName FROM (VALUES 
+        ('Alice'), ('Bob'), ('Charlie'), ('David'), ('Eve'),
+        ('Frank'), ('Grace'), ('Hannah'), ('Isaac'), ('Jack')
+    ) AS v(UserName)) AS temp_users
+JOIN Users u ON u.UserName = temp_users.UserName
+JOIN Products p ON 
+    p.ProductName = CASE 
+        WHEN u.UserName = 'Alice' THEN 'Laptop'
+        WHEN u.UserName = 'Bob' THEN 'Phone'
+        WHEN u.UserName = 'Charlie' THEN 'Tablet'
+        WHEN u.UserName = 'David' THEN 'Smartwatch'
+        WHEN u.UserName = 'Eve' THEN 'Headphones'
+        WHEN u.UserName = 'Frank' THEN 'Laptop'
+        WHEN u.UserName = 'Grace' THEN 'Phone'
+        WHEN u.UserName = 'Hannah' THEN 'Tablet'
+        WHEN u.UserName = 'Isaac' THEN 'Smartwatch'
+        WHEN u.UserName = 'Jack' THEN 'Headphones'
+    END;
+
+INSERT INTO Followers (FollowerId, FollowedId)
+SELECT 
+    u1.UserId AS FollowerId, 
+    u2.UserId AS FollowedId
+FROM 
+    (VALUES 
+        ('Alice', 'Bob'), ('Alice', 'Charlie'), ('Alice', 'David'),
+        ('Bob', 'Charlie'), ('Bob', 'Eve'), ('Bob', 'Frank'),
+        ('Charlie', 'David'), ('Charlie', 'Grace'),
+        ('David', 'Eve'), ('David', 'Hannah'),
+        ('Eve', 'Frank'), ('Eve', 'Isaac'),
+        ('Frank', 'Grace'), ('Frank', 'Jack'),
+        ('Grace', 'Hannah'), ('Grace', 'Alice'),
+        ('Hannah', 'Isaac'), ('Hannah', 'Bob'),
+        ('Isaac', 'Jack'), ('Isaac', 'Charlie'),
+        ('Jack', 'Alice'), ('Jack', 'David')
+    ) AS temp(FollowerName, FollowedName)
+JOIN Users u1 ON temp.FollowerName = u1.UserName
+JOIN Users u2 ON temp.FollowedName = u2.UserName;

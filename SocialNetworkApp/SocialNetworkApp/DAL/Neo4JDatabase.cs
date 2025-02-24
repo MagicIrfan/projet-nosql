@@ -10,7 +10,7 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
     {
         return _driver.AsyncSession();
     }
-    
+
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowers(string name, int depth)
     {
         var products = new List<(string ProductName, int Count)>();
@@ -20,8 +20,11 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
         var query = $@"
         MATCH (u:User {{name: '{name}'}})<-[:FOLLOWS*1..{depth}]-(f:User)
         MATCH (f)-[:BOUGHT]->(p:Product)
-        WITH p.name AS ProductName, COLLECT(DISTINCT f.name) AS Buyers
-        RETURN ProductName, SIZE(Buyers) AS ProductCount
+        WITH p.name AS ProductName, COLLECT(DISTINCT f) AS Buyers
+        UNWIND Buyers AS buyer
+        MATCH (buyer)-[:FOLLOWS*1..{depth}]-(subsequentFollower:User)
+        WITH p.name AS ProductName, COLLECT(DISTINCT subsequentFollower) AS AllFollowers
+        RETURN ProductName, SIZE(AllFollowers) AS ProductCount
         ORDER BY ProductCount DESC;
         ";
 
@@ -32,38 +35,45 @@ public class Neo4JDatabase(string uri, string user, string password) : IDisposab
             products.Add((result.Current["ProductName"].As<string>(), result.Current["ProductCount"].As<int>()));
         }
 
-
         return products;
     }
-
     public async Task<Dictionary<int, int>> GetNbUserOrderedProductByDepth(string name, int depth)
     {
-        await using var session = GetSession();
-
-        string query = $@"
-        MATCH (u:User)-[:BOUGHT]->(p:Product)
-        WHERE p.name = $name
-        WITH p, COLLECT(DISTINCT u) AS level0Users
-
-        MATCH path = (f:User)-[:FOLLOWS*0..{depth}]->(target:User)
-        WHERE target IN level0Users
-        WITH f, MIN(LENGTH(path)) AS level
-        RETURN level, COUNT(DISTINCT f) AS UserCount
-        ORDER BY level;
-            ";
-
-        var result = await session.RunAsync(query, new { name });
-
-        var userCountsByLevel = new Dictionary<int, int>();
-
-        while (await result.FetchAsync())
+        try
         {
-            int level = result.Current["level"].As<int>();
-            int userCount = result.Current["UserCount"].As<int>();
-            userCountsByLevel[level] = userCount;
-        }
+            var result = new Dictionary<int, int>();
 
-        return userCountsByLevel;
+            await using var session = GetSession();
+
+            var query = $@"
+            MATCH (buyer:User)-[:BOUGHT]->(p:Product {{name: $productName}})
+            WITH COLLECT(DISTINCT buyer) AS initialBuyers
+
+            UNWIND initialBuyers AS startUser
+            MATCH path=(startUser)-[:FOLLOWS*0..{depth}]->(follower:User)
+            WITH DISTINCT follower, LENGTH(path) AS level
+            MATCH (follower)-[:BOUGHT]->(p)
+            RETURN level, COUNT(DISTINCT follower) AS userCount
+            ORDER BY level;
+        ";
+
+            var queryResult = await session.RunAsync(query, new { productName = name });
+
+            while (await queryResult.FetchAsync())
+            {
+                var level = queryResult.Current["level"].As<int>();
+                var userCount = queryResult.Current["userCount"].As<int>();
+
+                result[level] = userCount;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] GetNbUserOrderedProductByDepth: {ex.Message}");
+            throw;
+        }
     }
 
     public async Task<List<(string ProductName, int Count)>> GetProductsOrderedByFollowersFilteredByProduct(string name, int depth, string product)
