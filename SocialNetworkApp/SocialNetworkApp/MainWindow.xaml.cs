@@ -7,7 +7,7 @@ namespace SocialNetworkApp;
 
 public partial class MainWindow
 {
-    private const string SqlConnectionString = "Server=FEUR\\SQLEXPRESS;Database=SocialNetworkDB;Trusted_Connection=True;TrustServerCertificate=True;";
+    private const string SqlConnectionString = "Server=localhost\\SQLEXPRESS;Database=SocialNetworkDB;Trusted_Connection=True;TrustServerCertificate=True;";
     private const string Neo4JUri = "bolt://localhost:7687";
     private const string Neo4JUser = "neo4j";
     private const string Neo4JPassword = "INFRES_XV";

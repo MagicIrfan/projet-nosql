@@ -24,15 +24,6 @@ CREATE TABLE Followers (
     FOREIGN KEY (FollowedId) REFERENCES Users(UserId)
 );
 
--- Données de test contrôlées sans spécifier d'ID (ils seront autogénérés)
-INSERT INTO Users (UserName) VALUES 
-    ('Alice'), ('Bob'), ('Charlie'), ('David'), ('Eve'),
-    ('Frank'), ('Grace'), ('Hannah'), ('Isaac'), ('Jack');
-
-INSERT INTO Products (ProductName) VALUES 
-    ('Laptop'), ('Phone'), ('Tablet'), ('Smartwatch'), ('Headphones');
-
-
 CREATE PROCEDURE InsertProducts
 AS
 BEGIN
@@ -52,6 +43,15 @@ EXEC InsertProducts;
 -- -------------------------------------------------------------------------------------------------------
 
 -- A insérer après avoir crée les utilisateurs depuis l'application
+
+-- Données de test contrôlées sans spécifier d'ID (ils seront autogénérés)
+INSERT INTO Users (UserName) VALUES 
+    ('Alice'), ('Bob'), ('Charlie'), ('David'), ('Eve'),
+    ('Frank'), ('Grace'), ('Hannah'), ('Isaac'), ('Jack');
+
+INSERT INTO Products (ProductName) VALUES 
+    ('Laptop'), ('Phone'), ('Tablet'), ('Smartwatch'), ('Headphones');
+
 INSERT INTO Purchases (UserId, ProductId)
 SELECT 
     u.UserId, p.ProductId

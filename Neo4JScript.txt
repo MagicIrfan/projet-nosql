@@ -1,3 +1,16 @@
+
+
+// Créer les produits
+WITH range(1, 10000) AS ids
+UNWIND ids AS id
+CREATE (:Product {id: id, name: 'Product' + id});
+
+
+//-------------------------------------------------------------------------------------------------------
+
+
+// A insérer après avoir crée les utilisateurs depuis l'application
+
 // Création des utilisateurs
 CREATE (u1:User {name: 'Alice'}),
        (u2:User {name: 'Bob'}),
@@ -16,17 +29,6 @@ CREATE (p1:Product {name: 'Laptop'}),
        (p3:Product {name: 'Tablet'}),
        (p4:Product {name: 'Smartwatch'}),
        (p5:Product {name: 'Headphones'});
-
-// Créer les produits
-WITH range(1, 10000) AS ids
-UNWIND ids AS id
-CREATE (:Product {id: id, name: 'Product' + id});
-
-
-//-------------------------------------------------------------------------------------------------------
-
-
-// A insérer après avoir crée les utilisateurs depuis l'application
 
 // Création des relations "BOUGHT" entre les utilisateurs et les produits
 MATCH (u1:User {name: 'Alice'}), (p1:Product {name: 'Laptop'})
